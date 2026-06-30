@@ -68,9 +68,14 @@
             {
                 foreach (var arg in method.args)
                 {
+                    if (arg.name == "ret" || arg.name == "retstr" || arg.name == "retjson" || arg.name == "rettitle")
+                    {
+                        arg.rtype = Reference.Ret;
+                        continue;
+                    }
                     if (arg.rtype != Reference.None)
                         continue;
-                    if (arg.name == "ret" || arg.name == "retstr")
+                    if (arg.type == "std::wstring&" && method.args.IndexOf(arg) == method.args.Count - 1)
                         arg.rtype = Reference.Ret;
                     else if (arg.type.Contains('*'))
                         arg.rtype = Reference.InOut;
@@ -92,7 +97,7 @@
                 func.name = func.name.Insert(0, Prefix);
                 func.args.Insert(0, new Arg()
                 {
-                    type = "libop*",
+                    type = "op::Client*",
                     name = ObjName,
                     annotation = string.Empty,
                 });
@@ -110,11 +115,11 @@
                 example = string.Empty,
                 name = ReleaseFunc,
                 annotation = string.Empty,
-                args = new List<Arg>() { new Arg() { type = "libop*", name = ObjName, annotation = string.Empty } },
+                args = new List<Arg>() { new Arg() { type = "op::Client*", name = ObjName, annotation = string.Empty } },
             });
             functions.Insert(0, new Method()
             {
-                rtype = "libop*",
+                rtype = "op::Client*",
                 rannotation = string.Empty,
                 example = string.Empty,
                 name = CreateFunc,
@@ -136,13 +141,55 @@
                 return;
             }
 
-            var findArg = function.args.Find(item => item.rtype == Reference.Ret);
+            var findArg = function.args.Find(item => item.type == "std::wstring&");
+            if (findArg == null)
+                findArg = function.args.Find(item => item.rtype == Reference.Ret);
             if (findArg == null)
                 return;
 
             if (findArg.type == "long*")
             {
                 function.rtype = "long";
+                if (!string.IsNullOrEmpty(findArg.annotation))
+                    function.rannotation = findArg.annotation;
+                function.args.Remove(findArg);
+                return;
+            }
+            if (findArg.type == "LONG_PTR*")
+            {
+                function.rtype = "LONG_PTR";
+                if (!string.IsNullOrEmpty(findArg.annotation))
+                    function.rannotation = findArg.annotation;
+                function.args.Remove(findArg);
+                return;
+            }
+            if (findArg.type == "int64_t*")
+            {
+                function.rtype = "int64_t";
+                if (!string.IsNullOrEmpty(findArg.annotation))
+                    function.rannotation = findArg.annotation;
+                function.args.Remove(findArg);
+                return;
+            }
+            if (findArg.type == "double*")
+            {
+                function.rtype = "double";
+                if (!string.IsNullOrEmpty(findArg.annotation))
+                    function.rannotation = findArg.annotation;
+                function.args.Remove(findArg);
+                return;
+            }
+            if (findArg.type == "float*")
+            {
+                function.rtype = "float";
+                if (!string.IsNullOrEmpty(findArg.annotation))
+                    function.rannotation = findArg.annotation;
+                function.args.Remove(findArg);
+                return;
+            }
+            if (findArg.type == "unsigned long*")
+            {
+                function.rtype = "unsigned long";
                 if (!string.IsNullOrEmpty(findArg.annotation))
                     function.rannotation = findArg.annotation;
                 function.args.Remove(findArg);
@@ -156,6 +203,9 @@
                 function.args.Remove(findArg);
                 function.args.Add(new Arg() { type = "wchar_t*", name = PStr, annotation = string.Empty });
                 function.args.Add(new Arg() { type = "int", name = PStrSize, annotation = string.Empty });
+                var statusArg = function.args.Find(item => item.type == "long*");
+                if (statusArg != null)
+                    function.args.Remove(statusArg);
                 return;
             }
             Console.WriteLine("[Error] 未处理的返回类型:" + function.ToString());

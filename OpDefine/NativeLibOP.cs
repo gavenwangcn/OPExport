@@ -47,6 +47,10 @@
                     if (line.Length > 0)
                         methodTxt.Add(line);
                 }
+                else if (line.StartsWith("#pragma", StringComparison.Ordinal) || line.StartsWith("#endif", StringComparison.Ordinal))
+                {
+                    methodTxt.Clear();
+                }
                 else
                 {
                     methodTxt.Add(line);
@@ -90,6 +94,10 @@
             //符号重载
             if (methodDefine.IndexOf("operator") >= 0)
                 return null;
+            if (methodDefine.Contains('{') || methodDefine.Contains("= delete") || methodDefine.Contains("= default"))
+                return null;
+            if (methodDefine.StartsWith("using ", StringComparison.Ordinal))
+                return null;
 
             Method method = new Method();
             method.rtype = methodDefine.Substring(0, returnTypeSplitIndex).Trim();
@@ -129,6 +137,8 @@
                     arg.type += '&';
                 }
             }
+            if (method.rtype.EndsWith('&') && method.rtype != "std::wstring&")
+                return null;
             return method;
         }
     }

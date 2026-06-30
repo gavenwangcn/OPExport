@@ -34,6 +34,38 @@ func func_genFunc(dllFunc)
             $rIndex = ($exMethod.args | array.size) - 1
             _func_argsRemoveAt $exMethod.args $rIndex
         end
+        if $findArg.type == "LONG_PTR*"
+            $exMethod.rtype = "LONG_PTR";
+            if !($findArg.annotation | string.empty)
+                $exMethod.annotation = $findArg.annotation;
+            end
+            $rIndex = ($exMethod.args | array.size) - 1
+            _func_argsRemoveAt $exMethod.args $rIndex
+        end
+        if $findArg.type == "int64_t*"
+            $exMethod.rtype = "int64_t";
+            if !($findArg.annotation | string.empty)
+                $exMethod.annotation = $findArg.annotation;
+            end
+            $rIndex = ($exMethod.args | array.size) - 1
+            _func_argsRemoveAt $exMethod.args $rIndex
+        end
+        if $findArg.type == "double*"
+            $exMethod.rtype = "double";
+            if !($findArg.annotation | string.empty)
+                $exMethod.annotation = $findArg.annotation;
+            end
+            $rIndex = ($exMethod.args | array.size) - 1
+            _func_argsRemoveAt $exMethod.args $rIndex
+        end
+        if $findArg.type == "float*"
+            $exMethod.rtype = "float";
+            if !($findArg.annotation | string.empty)
+                $exMethod.annotation = $findArg.annotation;
+            end
+            $rIndex = ($exMethod.args | array.size) - 1
+            _func_argsRemoveAt $exMethod.args $rIndex
+        end
         if $findArg.type == "std::wstring&"
             $exMethod.rtype = "std::wstring";
             if !($findArg.annotation | string.empty)
@@ -45,14 +77,54 @@ func func_genFunc(dllFunc)
     end
     ret $exMethod
 end
+#是否使用 _pStr/_nSize 缓冲区导出字符串
+func func_hasWstringBufferArgs(dllFunc)
+    for $arg in dllFunc.args
+        if $arg.name == gDefine.PStr
+            ret true
+        end
+    end
+    ret false
+end
+func func_findWstringRefArg(oMethod)
+    for $arg in oMethod.args
+        if $arg.type == "std::wstring&"
+            ret $arg
+        end
+    end
+    ret null
+end
+func func_hasLongStatusRet(oMethod)
+    for $arg in oMethod.args
+        if $arg.type == "long*"
+            ret true
+        end
+    end
+    ret false
+end
+func func_buildClientCallArgs(oMethod, wstringVarName)
+    $names = []
+    for $arg in oMethod.args
+        if $arg.type == "std::wstring&"
+            $names = $names | array.add wstringVarName
+        else if $arg.type == "long*"
+            $names = $names | array.add "&ret"
+        else if $arg.rtype == 4
+            continue
+        else
+            $names = $names | array.add $arg.name
+        end
+    end
+    ret ($names | array.join ", ")
+end
 ~}}
 #include "OP.h"
 
-libop* {{gDefine.CreateFunc}}()
+op::Client* {{gDefine.CreateFunc}}()
 {
-    return new libop();
+    return new op::Client();
 }
-void {{gDefine.ReleaseFunc}}(libop* {{gDefine.ObjName}})
+void {{gDefine.ReleaseFunc}}(op::Client* {{gDefine.ObjName}})
 {
     delete {{gDefine.ObjName}};
 }
@@ -82,6 +154,23 @@ $argNameStr = $argNameStrArray | array.join ", "
         return (int)(wstr.length() + 1) * sizeof(wchar_t);
     wcscpy_s({{gDefine.PStr}}, {{gDefine.PStrSize}} / sizeof(wchar_t), wstr.c_str());
     return 0;
+{{~ else if func_hasWstringBufferArgs $field ~}}
+{{~ $wstringArg = func_findWstringRefArg $oMethod ~}}
+    std::wstring {{$wstringArg.name}};
+{{~ if func_hasLongStatusRet $oMethod ~}}
+    long ret;
+    {{gDefine.ObjName}}->{{$oMethod.name}}({{func_buildClientCallArgs $oMethod $wstringArg.name}});
+    if ({{gDefine.PStr}} == nullptr || {{gDefine.PStrSize}} <= (int)({{$wstringArg.name}}.length() * sizeof(wchar_t)))
+        return (int)({{$wstringArg.name}}.length() + 1) * sizeof(wchar_t);
+    wcscpy_s({{gDefine.PStr}}, {{gDefine.PStrSize}} / sizeof(wchar_t), {{$wstringArg.name}}.c_str());
+    return ret;
+{{~ else ~}}
+    {{gDefine.ObjName}}->{{$oMethod.name}}({{func_buildClientCallArgs $oMethod $wstringArg.name}});
+    if ({{gDefine.PStr}} == nullptr || {{gDefine.PStrSize}} <= (int)({{$wstringArg.name}}.length() * sizeof(wchar_t)))
+        return (int)({{$wstringArg.name}}.length() + 1) * sizeof(wchar_t);
+    wcscpy_s({{gDefine.PStr}}, {{gDefine.PStrSize}} / sizeof(wchar_t), {{$wstringArg.name}}.c_str());
+    return 0;
+{{~ end ~}}
 {{~ else if $showFunc.rtype == "std::wstring" ~}}
 {{~ $lastArg = $oMethod.args | array.last ~}}
     std::wstring {{$lastArg.name}};
@@ -90,6 +179,17 @@ $argNameStr = $argNameStrArray | array.join ", "
         return (int)({{$lastArg.name}}.length() + 1) * sizeof(wchar_t);
     wcscpy_s({{gDefine.PStr}}, {{gDefine.PStrSize}} / sizeof(wchar_t), {{$lastArg.name}}.c_str());
     return 0;
+{{~ else if $showFunc.rtype == "LONG_PTR" || $showFunc.rtype == "int64_t" || $showFunc.rtype == "double" || $showFunc.rtype == "float" ~}}
+{{~ 
+    $lastArg = $oMethod.args | array.last 
+    $tempArray = $argNameStrArray
+    $size = $argNameStrArray | array.size
+    $tempArray = $tempArray | array.remove_at ($size - 1)
+    $tempArray = $tempArray | array.add ("&" + $lastArg.name)
+~}}
+    {{$showFunc.rtype}} {{$lastArg.name}} = 0;
+    {{gDefine.ObjName}}->{{$oMethod.name}}({{$tempArray | array.join ", "}});
+    return {{$lastArg.name}};
 {{~ else if $oMethod.rtype != "long" && $showFunc.rtype == "long" ~}}
 {{~ 
     $lastArg = $oMethod.args | array.last 

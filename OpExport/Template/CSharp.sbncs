@@ -25,13 +25,35 @@ func func_switchType(varType)
             ret "IntPtr"
         when "libop*" 
             ret "IntPtr"
+        when "op::Client*" 
+            ret "IntPtr"
         when "const wchar_t*" 
             ret "string"
         when "int*" 
             ret "IntPtr"
         when "long" 
             ret "int"
+        when "LONG_PTR" 
+            ret "IntPtr"
+        when "int64_t" 
+            ret "long"
         when "long*" 
+            ret "IntPtr"
+        when "LONG_PTR*" 
+            ret "IntPtr"
+        when "int64_t*" 
+            ret "IntPtr"
+        when "double" 
+            ret "double"
+        when "float" 
+            ret "float"
+        when "double*" 
+            ret "IntPtr"
+        when "float*" 
+            ret "IntPtr"
+        when "unsigned long" 
+            ret "uint"
+        when "unsigned long*" 
             ret "IntPtr"
         when "char*" 
             ret "IntPtr"
@@ -62,6 +84,18 @@ func func_switchArgType(varType, refType)
             ret $result + "int"
         when "long*" 
             ret $result + "int"
+        when "LONG_PTR" 
+            ret $result + "IntPtr"
+        when "int64_t" 
+            ret $result + "long"
+        when "LONG_PTR*" 
+            ret $result + "IntPtr"
+        when "int64_t*" 
+            ret $result + "long"
+        when "double*" 
+            ret $result + "double"
+        when "float*" 
+            ret $result + "float"
         when "char*" 
             ret $result + "string"
         when "size_t*" 
@@ -78,7 +112,8 @@ end
 func func_mergeArgTypeByDefine(argArray)
     $argStrArray = []
     for $arg in argArray
-        $temp = (func_switchArgType $arg.type $arg.rtype) + " " + $arg.name
+        $cleanType = $arg.type | string.strip
+        $temp = (func_switchArgType $cleanType $arg.rtype) + " " + $arg.name
         $argStrArray = $argStrArray | array.add $temp
     end
     ret ($argStrArray | array.join ", ")
@@ -86,32 +121,30 @@ end
 #生成方法定义
 func func_genFunc(dllFunc)
     $exMethod = (_func_methodByFunction dllFunc.name)
-    $findArg = null
-    if ($exMethod.args | array.size) > 0
-        $findTemp = $exMethod.args | array.last
-        if $findTemp.rtype == 4
-            $findArg = $findTemp
-        end
+    if $exMethod == null
+        ret null
     end
-    if $findArg != null
-        if $findArg.type == "long*"
-            $exMethod.rtype = "long";
-            if !($findArg.annotation | string.empty)
-                $exMethod.annotation = $findArg.annotation;
+    $exMethod.rtype = dllFunc.rtype
+    if dllFunc.rtype == "int"
+        for $arg in dllFunc.args
+            if $arg.name == gDefine.PStr
+                $exMethod.rtype = "std::wstring"
+                break
             end
-            $rIndex = ($exMethod.args | array.size) - 1
-            _func_argsRemoveAt $exMethod.args $rIndex
-        end
-        if $findArg.type == "std::wstring&"
-            $exMethod.rtype = "std::wstring";
-            if !($findArg.annotation | string.empty)
-                $exMethod.annotation = $findArg.annotation;
-            end
-            $rIndex = ($exMethod.args | array.size) - 1
-            _func_argsRemoveAt $exMethod.args $rIndex
         end
     end
     ret $exMethod
+end
+#从导出函数参数生成C#公开方法参数
+func func_publicArgs(dllFunc)
+    $publicArgs = []
+    for $arg in dllFunc.args
+        if $arg.name == gDefine.ObjName || $arg.name == gDefine.PStr || $arg.name == gDefine.PStrSize
+            continue
+        end
+        $publicArgs = $publicArgs | array.add $arg
+    end
+    ret $publicArgs
 end
 ~}}
 
@@ -120,9 +153,9 @@ using System.Runtime.InteropServices;
 public partial class OpSoft: IDisposable, IComparable<OpSoft>
 {
 #if X86
-    const string DLL_NAME = {{gDefine.Dll32Path}};
+    const string DLL_NAME = "{{ gDefine.Dll32Path }}";
 #else
-    const string DLL_NAME = {{gDefine.Dll64Path}};
+    const string DLL_NAME = "{{ gDefine.Dll64Path }}";
 #endif
 
     private IntPtr {{gDefine.ObjName}}; // 非托管资源
@@ -170,6 +203,10 @@ public partial class OpSoft: IDisposable, IComparable<OpSoft>
 {{~ for $field in libOP.functions ~}}
 {{~ if $field.name != gDefine.CreateFunc && $field.name != gDefine.ReleaseFunc ~}}
 {{~ $showFunc = func_genFunc $field ~}}
+{{~ if $showFunc == null ~}}
+{{~ continue ~}}
+{{~ end ~}}
+{{~ $publicArgs = func_publicArgs $field ~}}
 {{~ #代码注释 ~}}
     /// <summary>
 {{~ if $showFunc.annotation | string.empty ~}}
@@ -180,7 +217,7 @@ public partial class OpSoft: IDisposable, IComparable<OpSoft>
 {{~ end ~}}
 {{~ end ~}}
     /// </summary>
-{{~ for $a in $showFunc.args ~}}
+{{~ for $a in $publicArgs ~}}
     /// <param name="{{$a.name}}">{{$a.annotation | string.replace "\n" " "}}</param>
 {{~ end ~}}
 {{~ if !($showFunc.rannotation | string.empty)~}}
@@ -198,28 +235,32 @@ public partial class OpSoft: IDisposable, IComparable<OpSoft>
 
 {{~ #生成方法
 $argStrArray = []
- for $a in $showFunc.args
-     $a.type = func_switchArgType $a.type $a.rtype
-     $temp = $a.type + " " + $a.name
+ for $a in $publicArgs
+     $showType = func_switchArgType $a.type $a.rtype
+     $temp = $showType + " " + $a.name
      $argStrArray = $argStrArray | array.add $temp
  end 
 $showArgs = ($argStrArray | array.join ", ")
 
 $callNames = []
 for $arg in $field.args
+    if $arg.name == gDefine.PStr || $arg.name == gDefine.PStrSize
+        continue
+    end
     $findItem = null
-    for $showArg in $showFunc.args
+    for $showArg in $publicArgs
+        $showType = func_switchArgType $showArg.type $showArg.rtype
         if $showArg.name == $arg.name
-            $findItem = $showArg
+            $findItem = $showType
             break
         end
     end
     if $findItem == null
         $callNames = $callNames | array.add $arg.name
     else
-        if $findItem.type | string.starts_with "ref "
+        if $findItem | string.starts_with "ref "
             $callNames = $callNames | array.add ("ref " + $arg.name)
-        else if $findItem.type | string.starts_with "out "
+        else if $findItem | string.starts_with "out "
             $callNames = $callNames | array.add ("out " + $arg.name)
         else
             $callNames = $callNames | array.add $arg.name
@@ -231,16 +272,20 @@ end
 {{~ if $showFunc.rtype == "std::wstring" ~}}
     public {{func_switchRtnType $showFunc.rtype}} {{$showFunc.name}}({{$showArgs}})
     {
-        int _size = {{$field.name}}({{$callNames | array.join ", "}});
+        int _size = {{$field.name}}({{$callNames | array.join ", "}}, {{gDefine.PStr}}, {{gDefine.PStrSize}});
         if (_size > 0)
         {
             if ({{gDefine.PStrSize}} > 0) Marshal.FreeHGlobal({{gDefine.PStr}});
             {{gDefine.PStr}} = Marshal.AllocHGlobal({{gDefine.PStrSize}} = _size);
-            {{$field.name}}({{$callNames | array.join ", "}});
+            {{$field.name}}({{$callNames | array.join ", "}}, {{gDefine.PStr}}, {{gDefine.PStrSize}});
         }
         string str = Marshal.PtrToStringUni({{gDefine.PStr}});
         return str;
     }
+{{~ else if $showFunc.rtype == "LONG_PTR" ~}}
+    public IntPtr {{$showFunc.name}}({{$showArgs}}) => new IntPtr({{$field.name}}({{$callNames | array.join ", "}}));
+{{~ else if $showFunc.rtype == "int64_t" || $showFunc.rtype == "double" || $showFunc.rtype == "float" ~}}
+    public {{func_switchRtnType $showFunc.rtype}} {{$showFunc.name}}({{$showArgs}}) => {{$field.name}}({{$callNames | array.join ", "}});
 {{~ else ~}}
     public {{func_switchRtnType $showFunc.rtype}} {{$showFunc.name}}({{$showArgs}}) => {{$field.name}}({{$callNames | array.join ", "}});
 {{~ end -}}
